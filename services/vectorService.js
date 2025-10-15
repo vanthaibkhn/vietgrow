@@ -1,45 +1,89 @@
 // services/vectorService.js
-// Handles embedding creation and similarity search using Firestore (can switch to pgvector later)
-import { db } from '../lib/firebase.js';
-import { openai } from '../lib/openai.js';
+// ✅ Quản lý lưu trữ embedding: local mock hoặc Firestore/vectorDB
+import fs from 'fs/promises';
+import path from 'path';
+
+const VECTOR_FILE = path.join(process.cwd(), 'data/vectors.json');
+const USE_VECTOR_MOCK = String(process.env.USE_VECTOR_MOCK || 'false').toLowerCase() === 'true';
+
+let vectorCache = {};
+let loaded = false;
+
+async function ensureLoaded() {
+  if (loaded) return;
+  try {
+    const raw = await fs.readFile(VECTOR_FILE, 'utf-8');
+    vectorCache = raw ? JSON.parse(raw) : {};
+    console.log('[vectorService] ✅ Cache loaded (' + Object.keys(vectorCache).length + ' vectors)');
+  } catch {
+    console.log('[vectorService] ⚙️ No existing vector file, initializing new.');
+    vectorCache = {};
+  }
+  loaded = true;
+}
 
 export const vectorService = {
+  /**
+   * 🔹 Tạo embedding mock hoặc thực tế (được gọi bởi aiService)
+   */
   async createEmbedding(text) {
-    const res = await openai.embeddings.create({
-      model: process.env.EMBEDDING_MODEL || 'text-embedding-3-small',
-      input: text,
-    });
-    return res.data[0].embedding;
+    if (USE_VECTOR_MOCK) {
+      console.log('[vectorService] 🧩 Using mock embedding for:', text.slice(0, 40));
+      return Array.from({ length: 8 }, () => Math.random());
+    }
+    throw new Error('createEmbedding() called without mock; use aiService’s OpenAI embedding.');
   },
 
-  async findSimilar(text, threshold = 0.85) {
-    if (!db) return null;
-    const embeddingRes = await this.createEmbedding(text);
-    const snapshot = await db.collection('questions').get();
-    let best = null;
-    let bestScore = 0;
+  /**
+   * 🔹 Lưu embedding (local hoặc DB thật sau này)
+   */
+  async saveEmbedding(question, embedding) {
+    if (!embedding) {
+      console.warn('[vectorService] ⚠️ No embedding provided → skip save.');
+      return;
+    }
 
-    for (const doc of snapshot.docs) {
-      const data = doc.data();
-      if (!data.embedding) continue;
-      const score = this.cosineSimilarity(embeddingRes, data.embedding);
-      if (score > threshold && score > bestScore) {
-        best = data;
+    await ensureLoaded();
+    vectorCache[question] = embedding;
+
+    try {
+      await fs.writeFile(VECTOR_FILE, JSON.stringify(vectorCache, null, 2), 'utf-8');
+      console.log('[vectorService] 💾 Embedding saved:', question.slice(0, 40));
+    } catch (err) {
+      console.error('[vectorService] 💥 Failed to save embedding:', err.message);
+    }
+  },
+
+  /**
+   * 🔹 Tìm câu tương tự dựa trên cosine similarity (mock)
+   */
+  async findSimilar(question) {
+    await ensureLoaded();
+
+    const normalized = question.trim().toLowerCase();
+    const keys = Object.keys(vectorCache);
+    if (keys.length === 0) return null;
+
+    let bestKey = null;
+    let bestScore = -1;
+    const threshold = parseFloat(process.env.SIMILARITY_THRESHOLD || '0.85');
+
+    // Mock cosine similarity bằng cách đếm từ trùng
+    for (const key of keys) {
+      const overlap = key.split(' ').filter((w) => normalized.includes(w)).length;
+      const score = overlap / Math.max(key.split(' ').length, 1);
+      if (score > bestScore) {
         bestScore = score;
+        bestKey = key;
       }
     }
-    return best;
-  },
 
-  cosineSimilarity(a, b) {
-    const dot = a.reduce((sum, ai, i) => sum + ai * b[i], 0);
-    const magA = Math.sqrt(a.reduce((s, ai) => s + ai * ai, 0));
-    const magB = Math.sqrt(b.reduce((s, bi) => s + bi * bi, 0));
-    return dot / (magA * magB);
-  },
-
-  async saveEmbedding(question, embedding) {
-    if (!db) return;
-    await db.collection('questions').add({ question, embedding, createdAt: new Date() });
+    if (bestScore >= threshold && bestKey) {
+      console.log(`[vectorService] 🧠 Similar question found (score=${bestScore.toFixed(2)})`);
+      return { answer: 'Từ cache: ' + bestKey, similarTo: bestKey };
+    }
+    console.log('[vectorService] 🔍 No similar question above threshold');
+    return null;
   },
 };
+

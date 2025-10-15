@@ -1,41 +1,40 @@
 // services/feedbackService.js
-import fs from 'fs';
+// ✅ Ghi nhận feedback người dùng (helpful / not helpful + note)
+import fs from 'fs/promises';
 import path from 'path';
 import { db } from '../lib/firebase.js';
 
-const FEEDBACK_FILE = './data/feedback.json';
+const FEEDBACK_FILE = path.join(process.cwd(), 'data/feedback.json');
 
 export const feedbackService = {
-  async saveFeedback({ question, useful, userIp }) {
-    const feedback = {
-      question,
-      useful,
+  async saveFeedback({ questionId, rating, note, userIp }) {
+    console.log('[feedbackService] 📨 Saving feedback for:', questionId);
+    const entry = {
+      questionId,
+      rating, // 'helpful' | 'not_helpful'
+      note: note || null,
       userIp,
-      timestamp: new Date().toISOString(),
+      createdAt: new Date().toISOString(),
     };
 
-    // --- Lưu local (backup) ---
+    // Ghi local (fail-safe)
     try {
-      let data = {};
-      if (fs.existsSync(FEEDBACK_FILE)) {
-        data = JSON.parse(fs.readFileSync(FEEDBACK_FILE, 'utf-8'));
-      }
-      if (!data[userIp]) data[userIp] = {};
-      data[userIp][question] = { useful, timestamp: feedback.timestamp };
-      fs.writeFileSync(FEEDBACK_FILE, JSON.stringify(data, null, 2));
-      console.log(`[feedbackService] 💾 Lưu local feedback: ${userIp}`);
+      const raw = await fs.readFile(FEEDBACK_FILE, 'utf-8').catch(() => '{}');
+      const json = raw ? JSON.parse(raw) : {};
+      json[Date.now()] = entry;
+      await fs.writeFile(FEEDBACK_FILE, JSON.stringify(json, null, 2), 'utf-8');
+      console.log('[feedbackService] ✅ Local feedback written');
     } catch (err) {
-      console.error('[feedbackService] ❌ Lỗi lưu local:', err.message);
+      console.warn('[feedbackService] ⚠️ Local write failed:', err.message);
     }
 
-    // --- Lưu Firestore (nếu bật) ---
-    if (db) {
-      try {
-        await db.collection('feedbacks').add(feedback);
-        console.log('[feedbackService] ☁️ Lưu feedback lên Firestore');
-      } catch (err) {
-        console.error('[feedbackService] ⚠️ Firestore feedback lỗi:', err.message);
-      }
+    // Ghi Firestore song song
+    try {
+      if (!db) throw new Error('Firestore not initialized');
+      await db.collection('feedback').add(entry);
+      console.log('[feedbackService] ✅ Firestore feedback saved');
+    } catch (err) {
+      console.error('[feedbackService] ⚠️ Firestore save failed:', err.message);
     }
   },
 };

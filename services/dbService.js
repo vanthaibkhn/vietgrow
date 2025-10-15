@@ -1,48 +1,58 @@
 // services/dbService.js
-// Dual mode: lưu Firestore (nếu bật) + backup local JSON (Filestore).
-// Nếu Firestore bị lỗi → tự fallback sang local.
+// ✅ Firestore + local backup service
+import fs from 'fs/promises';
+import path from 'path';
+import { db } from '../lib/firebase.js';
 
-import fs from "fs";
-import path from "path";
-import { db } from "../lib/firebase.js";
-
-const DATA_DIR = process.env.DATA_DIR || "./data";
+const QA_FILE = path.join(process.cwd(), 'data/qa.json');
 
 export const dbService = {
-  async saveQA({ question, answer, embedding, userIp }) {
-    const data = {
+  /**
+   * 🔹 Lưu câu hỏi–trả lời (song song Firestore + local)
+   */
+  async saveQA({ question, answer, embedding, userIp, uid }) {
+    const entry = {
       question,
       answer,
       embedding,
       userIp,
+      uid,
       createdAt: new Date().toISOString(),
     };
 
-    const safeIp = (userIp || "unknown").replace(/[:.]/g, "_");
-    const dir = path.join(DATA_DIR, "questions");
-    const filePath = path.join(dir, `${Date.now()}-${safeIp}.json`);
+    console.log('[dbService] 💾 Saving QA entry for question:', question.slice(0, 40));
 
+    // Ghi local trước (fail-safe)
     try {
-      // 1️⃣ Ghi local backup trước
-      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
-      console.log(`[dbService] 💾 Backup local: ${filePath}`);
-
-      // 2️⃣ Lưu Firestore song song (nếu có db)
-      if (db) {
-        db.collection("questions")
-          .add(data)
-          .then((docRef) =>
-            console.log(`[dbService] ☁️ Firestore saved: ${docRef.id}`)
-          )
-          .catch((err) =>
-            console.error("[dbService] ❌ Firestore save error:", err.message)
-          );
-      } else {
-        console.warn("[dbService] ⚠️ Firestore disabled — local only.");
-      }
+      const raw = await fs.readFile(QA_FILE, 'utf-8').catch(() => '{}');
+      const json = raw ? JSON.parse(raw) : {};
+      json[Date.now()] = entry;
+      await fs.writeFile(QA_FILE, JSON.stringify(json, null, 2), 'utf-8');
+      console.log('[dbService] ✅ Local QA backup written');
     } catch (err) {
-      console.error("[dbService] ❌ Lỗi lưu QA:", err.message);
+      console.warn('[dbService] ⚠️ Local backup failed:', err.message);
+    }
+
+    // Ghi Firestore song song
+    try {
+      if (!db) throw new Error('Firestore not initialized');
+      await db.collection('questions').add(entry);
+      console.log('[dbService] ✅ Firestore QA saved');
+    } catch (err) {
+      console.error('[dbService] ⚠️ Firestore save failed:', err.message);
+    }
+  },
+
+  /**
+   * 🔹 Cập nhật quota user (dùng trong rateLimitService)
+   */
+  async updateUserQuota(uid, freeQuotaUsed, lastResetDate) {
+    try {
+      if (!db) throw new Error('Firestore not initialized');
+      await db.collection('users').doc(uid).update({ freeQuotaUsed, lastResetDate });
+      console.log(`[dbService] ✅ Updated user quota (${uid}: ${freeQuotaUsed})`);
+    } catch (err) {
+      console.warn('[dbService] ⚠️ updateUserQuota failed:', err.message);
     }
   },
 };
