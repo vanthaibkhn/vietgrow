@@ -1,15 +1,25 @@
-// services/authService.js (đã tối ưu)
-import { doc, setDoc, getDoc, updateDoc } from "firebase/firestore";
-import { createUserWithEmailAndPassword, signInWithEmailAndPassword } from "firebase/auth";
+// services/authService.js
+import {
+  doc,
+  setDoc,
+  getDoc,
+  updateDoc,
+} from "firebase/firestore";
+import {
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+} from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebaseClient";
 
 export const authService = {
   async register(email, password) {
     console.log("[authService] 🚀 Register:", email);
     const { auth, db } = await getFirebaseClient();
-    const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-    const user = userCredential.user;
 
+    const userCred = await createUserWithEmailAndPassword(auth, email, password);
+    const user = userCred.user;
+
+    // 🔹 Lưu thông tin user vào Firestore
     await setDoc(doc(db, "users", user.uid), {
       email,
       createdAt: new Date().toISOString(),
@@ -24,8 +34,10 @@ export const authService = {
   async login(email, password) {
     console.log("[authService] 🚀 Login:", email);
     const { auth } = await getFirebaseClient();
-    const userCredential = await signInWithEmailAndPassword(auth, email, password);
-    const user = userCredential.user;
+
+    const userCred = await signInWithEmailAndPassword(auth, email, password);
+    const user = userCred.user;
+
     return { uid: user.uid, email: user.email };
   },
 
@@ -41,6 +53,7 @@ export const authService = {
     const ref = doc(db, "users", uid);
     const today = new Date().toISOString().slice(0, 10);
     await updateDoc(ref, { freeQuotaUsed: newCount, lastResetDate: today });
+    console.log(`[authService] 🔄 Updated quota for ${uid} → ${newCount}`);
   },
 };
 
