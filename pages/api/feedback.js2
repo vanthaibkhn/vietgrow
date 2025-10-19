@@ -1,0 +1,31 @@
+// pages/api/feedback.js (phiên bản cuối, đồng bộ feedbackService)
+import { feedbackService } from "../../services/feedbackService.js";
+
+export default async function handler(req, res) {
+  if (req.method !== "POST")
+    return res.status(405).json({ error: "Method not allowed" });
+
+  try {
+    const { questionId, feedback, note } = req.body;
+    const ipHeader = req.headers["x-forwarded-for"];
+    const userIp = ipHeader ? ipHeader.split(",")[0].trim() : req.socket.remoteAddress;
+
+    if (!feedback || typeof feedback !== "string") {
+      return res.status(400).json({ error: "Thiếu nội dung phản hồi." });
+    }
+
+    await feedbackService.saveFeedback({
+      questionId: questionId || null,
+      rating: feedback.trim(),
+      note: note || null,
+      userIp,
+    });
+
+    console.log(`[feedback] ✅ Saved feedback (${userIp})`);
+    return res.status(200).json({ message: "✅ Cảm ơn phản hồi của bạn 💬", saved: true });
+  } catch (err) {
+    console.error("[feedback] 💥 Lỗi ghi nhận phản hồi:", err.message);
+    res.status(500).json({ error: "Không thể lưu phản hồi." });
+  }
+}
+

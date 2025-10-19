@@ -1,0 +1,103 @@
+// lib/firebaseClient.js
+// ✅ Final Version with Extended Debug Logs & Client/Server Detection
+// Safe Firebase Client SDK initialization for Next.js 15+
+// Support: Firebase v12+, Turbopack, and client-side dynamic imports
+
+import { initializeApp, getApps, getApp } from "firebase/app";
+import { getAuth } from "firebase/auth";
+import { getFirestore } from "firebase/firestore";
+
+// Cached instances to prevent re-initialization
+let firebaseApp = null;
+let firebaseAuth = null;
+let firebaseDB = null;
+
+export async function getFirebaseClient() {
+  // ✅ Kiểm tra xem đang chạy ở client hay server
+  if (typeof window === "undefined") {
+    console.warn(
+      "[firebaseClient] ⚠️ Running in server context — Firebase Client SDK will not initialize."
+    );
+    return {};
+  }
+
+  // ✅ Nếu app đã được khởi tạo, trả về ngay (tránh lỗi duplicate)
+  if (firebaseApp && firebaseAuth && firebaseDB) {
+    console.log("[firebaseClient] ⚡ Reusing existing Firebase client instance");
+    return { app: firebaseApp, auth: firebaseAuth, db: firebaseDB };
+  }
+
+  console.log("[firebaseClient] ⚙️ Initializing Firebase client...");
+
+  // ✅ Cấu hình Firebase lấy từ biến môi trường
+  const firebaseConfig = {
+    apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
+    authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
+    projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
+    storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
+    messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
+    appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
+  };
+
+  // 🔍 Log chi tiết biến môi trường để debug
+  console.log("[firebaseClient] 🔍 Env Check:", {
+    apiKey:
+      firebaseConfig.apiKey && firebaseConfig.apiKey.length > 5
+        ? "✅ Loaded"
+        : "❌ Missing or too short",
+    authDomain: firebaseConfig.authDomain || "❌ Missing",
+    projectId: firebaseConfig.projectId || "❌ Missing",
+    storageBucket: firebaseConfig.storageBucket || "❌ Missing",
+    appId: firebaseConfig.appId
+      ? firebaseConfig.appId.slice(0, 10) + "..."
+      : "❌ Missing",
+  });
+
+  // ✅ Nếu đang chạy trên client, hiển thị config thực tế (ẩn khóa nhạy cảm)
+  if (typeof window !== "undefined") {
+    console.log("[firebaseClient] 🔍 Loaded config on client:", {
+      projectId: firebaseConfig.projectId,
+      apiKey: firebaseConfig.apiKey
+        ? firebaseConfig.apiKey.slice(0, 8) + "..."
+        : "❌ Missing",
+      authDomain: firebaseConfig.authDomain,
+    });
+  } else {
+    console.log("[firebaseClient] ⚠️ Running on server, env not available.");
+  }
+
+  // ⚠️ Nếu thiếu env → cảnh báo rõ ràng
+  if (!firebaseConfig.apiKey || !firebaseConfig.projectId) {
+    console.error(
+      "[firebaseClient] ❌ Missing Firebase env vars. Check your .env.local file (must start with NEXT_PUBLIC_)."
+    );
+  }
+
+  // ✅ Khởi tạo app an toàn (chỉ một lần)
+  const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
+
+  // ✅ Khởi tạo Auth & Firestore client
+  const auth = getAuth(app);
+  const db = getFirestore(app);
+
+  // Cache lại để tái sử dụng
+  firebaseApp = app;
+  firebaseAuth = auth;
+  firebaseDB = db;
+
+  // 📦 Log cấu hình app thực tế sau khi init
+  console.log("[firebaseClient] ✅ Firebase client initialized successfully");
+  console.log("[firebaseClient] 🧩 App name:", app.name);
+  console.log("[firebaseClient] 🧩 App options:", app.options);
+
+  // Kiểm tra nhanh kết nối Firestore (client)
+  try {
+    const projectId = app.options?.projectId || "(unknown)";
+    console.log(`[firebaseClient] 🔗 Connected to project: ${projectId}`);
+  } catch (err) {
+    console.error("[firebaseClient] ⚠️ Firestore connection check failed:", err);
+  }
+
+  return { app, auth, db };
+}
+

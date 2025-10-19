@@ -1,0 +1,9 @@
+{
+  "crons": [
+    {
+      "path": "/api/_cron_learn",
+      "schedule": "0 3 * * 1"
+    }
+  ]
+}
+
